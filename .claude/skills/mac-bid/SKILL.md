@@ -31,8 +31,8 @@ Resell evaluation is a toggle. It can stack on (1) or (3). Default off unless as
 - `scripts/fetch_lot.py --aid <aid> --lid <lid>` — live DDB payload (current bid, bids count, closing time, lot_id, building_id).
 - `scripts/scrape_lot_ssr.py --aid <aid> --lid <lid>` — SSR `__NEXT_DATA__` parse (title, brand, model, UPC, condition, category, retail, image URLs, description).
 - `scripts/fetch_buildings.py` — refreshes `cache/buildings.json` (building_id → name, city, state, sales_tax_rate).
-- `scripts/ebay_search.py <query> [--condition NEW,LIKE_NEW,OPEN_BOX]` — single eBay Browse sold-search pass. Returns count, median, range, sample. The cascade across multiple passes is orchestrated **here** in the skill, not inside the script.
-- `scripts/max_bid.py --median X --tax Y --location Z [--discount 0.30 --buyers-premium 0.15 --lot-fee 3.00]` — runs the formula, returns max_bid.
+- `scripts/ebay_search.py --query "<query>" [--upc <upc>] [--condition NEW,LIKE_NEW,OPEN_BOX]` — single eBay Browse sold-search pass. Query/UPC are flags, **not positional**. Returns count, median, range, sample. The cascade across multiple passes is orchestrated **here** in the skill, not inside the script.
+- `scripts/max_bid.py --median <price> --tax <rate> --location {home|transfer|remote} [--location-cost <num>] [--discount 0.30 --buyers-premium 0.15 --lot-fee 3.00] [--current-bid <num>]` — runs the formula, returns max_bid. `--location` is an enum that picks the default cost tier; override with `--location-cost <num>` if needed.
 
 Scripts emit compact JSON. Prefer them over inline fetching so caching/retries stay centralized.
 
@@ -107,79 +107,95 @@ Include an explicit "FB Marketplace check" section in the report for these.
 
 ---
 
+## Orchestration model — main agent dispatches, sub-agents do the work
+
+The main agent's job is to **parse input, dispatch sub-agents, collect compact JSON, and print a one-line summary to the user.** It does not run scripts, read SSR dumps, analyze images, or write lot reports itself. Every workflow below follows the same shape:
+
+```
+parse input  →  dispatch sub-agent(s)  →  collect JSON  →  (optional: dispatch again)  →  print summary
+```
+
+### Sub-agent roster
+
+All agents live under `.claude/agents/` and are invoked via the Agent tool. Pass inputs as compact JSON.
+
+| Agent                | Purpose                                                                           | Owns                                                            |
+| -------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `mac-bid-lot`        | Full single-lot analysis pipeline end-to-end. Returns compact summary JSON.      | SSR scrape, live fetch, buildings lookup, eBay cascade, image analysis, condition gating, max_bid, deal score, resell, lot report write. |
+| `mac-bid-ebay`       | eBay comp cascade only. Returns cascade JSON.                                    | UPC vs ASIN detection, 4-step cascade, confidence grading.      |
+| `mac-bid-images`     | Image damage / mismatch analysis only. Returns flag JSON.                        | Download, vision analysis, severity classification.             |
+| `mac-bid-discovery`  | Open-lots scan + rank. Returns candidate list JSON.                              | mac.bid search endpoint, lightweight heuristic ranking.         |
+| `mac-bid-watchlist`  | Watchlist refresh end-to-end. Returns flag summary JSON; rewrites `watchlist.md`.| Parse/rewrite `watchlist.md`, parallel fetch, flag computation. |
+| `mac-bid-report`     | Writes `discovery-*.md` or `compare-*.md` from a list of lot summaries.          | Aggregate report templates and file write.                      |
+
+### Rules
+
+- **Main agent never runs scripts or reads SSR / image data.** Those go through sub-agents.
+- **Pass compact inputs only.** The main agent has `aid`+`lid` (from user URL) and whatever JSON the last sub-agent returned. Don't echo full payloads — the sub-agent reads the cache itself.
+- **Parallel fan-out goes in a single assistant message.** For workflows that spawn N sub-agents, send all N Agent tool calls in one message so the harness runs them concurrently.
+- **`mac-bid-lot` does eBay + images inline inside its own context** (does NOT spawn `mac-bid-ebay`/`mac-bid-images` as sub-sub-agents). Nesting adds overhead and no context saving at that layer. The standalone `mac-bid-ebay` and `mac-bid-images` agents exist for ad-hoc standalone use (e.g. user asks "just run the eBay comps on this product").
+- **All lot identity keys on `lid`.** `aid` is a per-modal context param passed to scripts but never used as an identity key for reports, cache files, or watchlist entries.
+
+---
+
 ## Workflow 1 — Analyze single lot
 
-**Inputs**: one mac.bid URL containing `aid` and `lid` query params, or direct `aid`+`lid` input (e.g. "analyze 79565/3078E", "analyze aid=79565 lid=3078E").
+**Inputs**: one mac.bid URL containing `aid`+`lid`, or direct `aid`+`lid` input.
 
-**Input parsing**:
-- Any mac.bid URL with both `?aid=<aid>&lid=<lid>` query params is a lot reference, regardless of path (`/lot/*`, `/account/watchlist`, `/search`, `/past-auctions/*`, etc.). The lot modal state is encoded in those params.
-- `aid` may be numeric (`79565`) or alphanumeric (`MVL2604-24-A1`). `lid` is short alphanumeric (`1795Q`, `3078E`).
-- If the user supplies only one of `aid` or `lid`, ask for the missing piece — do not guess. Scripts require both to hit the APIs.
-- Legacy `/lot/<id>` path-style URLs (if still encountered) should be surfaced to the user as insufficient — ask them for both `aid` and `lid`.
-- If the user pastes two URLs with the same `lid` but different `aid` values, treat them as the **same lot** (dedup on `lid`). `aid` differs only because the lot was surfaced from different modal contexts.
+**Input parsing** (main agent):
+- Any mac.bid URL with `?aid=<aid>&lid=<lid>` is a lot reference regardless of path (`/lot/*`, `/account/watchlist`, `/search`, etc.).
+- `aid` may be numeric (`79565`) or alphanumeric (`MVL2604-24-A1`). `lid` is short alphanumeric.
+- If user supplies only one of aid/lid, ask for the missing piece — do not guess.
+- Legacy `/lot/<id>` path-style URLs are insufficient — ask for both.
+- Two URLs with same `lid` but different `aid` → dedup on `lid`.
 
-**Steps**:
-1. Extract `aid` and `lid` from the URL query string (or accept them directly from user input).
-2. `scripts/scrape_lot_ssr.py --aid <aid> --lid <lid>` → product metadata + image URLs. **Writes SSR cache to `cache/lots/{lid}.ssr.json` including `internal_id`.**
-3. `scripts/fetch_lot.py --aid <aid> --lid <lid>` → live bid data + `building_id`. **Reads the SSR cache to resolve `internal_id` before hitting the DDB endpoint.**
+**Dispatch**:
+1. Spawn `mac-bid-lot` with `{aid, lid, write_report: true, resell: <bool>}`.
+2. Receive summary JSON.
+3. Print one-line summary: recommendation + deal score + one key flag. Link to `reports/lot-{lid}.md`.
 
-> Steps 2 and 3 must run **sequentially, not in parallel** — `fetch_lot` depends on the SSR-derived `internal_id`.
-4. If `cache/buildings.json` missing or stale (>7 days), run `scripts/fetch_buildings.py`. Look up sales_tax and location classification.
-5. Run eBay cascade (above).
-6. Analyze 2–6 images via vision. Record flags.
-7. Apply condition gating. If blocked, write the report with "manual review" instead of a recommendation.
-8. `scripts/max_bid.py` with the cascade median, tax rate, location cost.
-9. Compute deal score.
-10. If resell toggled: compute resell evaluation.
-11. Write `reports/lot-{lid}.md` using the template below.
-
-**Output**: `reports/lot-{lid}.md`. Also print a one-line summary to the user (deal score + recommendation + one key flag if any).
+That's the entire main-agent flow. The sub-agent handles SSR, live fetch, buildings, eBay cascade, images, gating, max_bid, report write.
 
 ## Workflow 2 — Discover deals
 
-**Inputs**: "what's closing [tonight|today|soon]", optionally constrained to warehouses or categories.
+**Inputs**: "what's closing tonight", "deals today", optionally constrained to warehouses / categories.
 
-**Steps**:
-1. Query open-lots endpoint (via `scripts/fetch_lot.py` or a discovery variant) filtered to building IDs 15, 16, 6, 1 by default.
-2. For each candidate, do a **lightweight pass**: current bid, condition, title. Skip if condition fails gating and user didn't opt in.
-3. Rank by a quick heuristic (e.g., `current_bid / retail_price` low, closing soon, condition good).
-4. Take top ~10. For each, run the full single-lot pipeline **without writing individual reports**.
-5. Write `reports/discovery-{YYYY-MM-DD}.md` — ranked shortlist with deal score, warnings, link to each lot. Offer to generate full per-lot reports on request.
+**Dispatch**:
+1. Spawn `mac-bid-discovery` with `{intent, building_ids, category_filter, condition_filter, max_candidates, close_within_hours, price_ceiling}`. Returns a candidate list (aid+lid each).
+2. **Fan out**: in a single assistant message, spawn one `mac-bid-lot` per candidate with `write_report: false`. Each returns a compact summary.
+3. Spawn `mac-bid-report` with `{report_type: "discovery", date, user_intent, lot_summaries: [...]}`. Returns `report_path` + `headline`.
+4. Print `headline` to user + offer per-lot full reports on request.
 
 ## Workflow 3 — Compare lots
 
 **Inputs**: 2+ URLs/IDs + "compare" / "which is best".
 
-**Steps**:
-1. Run steps 1–10 of Workflow 1 for each lot (in parallel where possible).
-2. Write `reports/compare-{YYYY-MM-DD}-{slug}.md` — table of lots across columns, narrative verdict at the end picking the winner and stating why. Include deal scores, max bids, flags.
+**Dispatch**:
+1. Parse all aid+lid pairs.
+2. **Fan out**: in a single assistant message, spawn one `mac-bid-lot` per lot with `write_report: true`. Each returns a summary + writes its own `reports/lot-{lid}.md`.
+3. Spawn `mac-bid-report` with `{report_type: "compare", date, slug, lot_summaries: [...]}`. Returns `report_path` + `headline` (includes winner).
+4. Print winner + report path to user.
 
 ## Workflow 4 — Watchlist refresh
 
-**Inputs**: "refresh watchlist", "check my watches", or implicit when user mentions `watchlist.md`.
+**Inputs**: "refresh watchlist", "check my watches", "add/remove watch", implicit mention of `watchlist.md`.
 
-Source of truth: `/watchlist.md` at project root. Human-editable markdown. Each entry has at minimum: lot URL/ID, user's max bid, optional notes.
+**Dispatch**:
+1. Spawn `mac-bid-watchlist` with `{action: "refresh" | "add" | "remove", ...}`. The sub-agent parses `watchlist.md`, fetches all lots in parallel inside its context, computes flags, and rewrites the file.
+2. Print the returned `summary_line` to the user.
 
-**Steps**:
-1. Parse `watchlist.md`. Each entry's lot reference provides both `aid` and `lid` (parsed from the URL's query params or explicitly listed).
-2. For each entry: `scripts/fetch_lot.py --aid <aid> --lid <lid>` — current bid, time remaining.
-3. For each entry, flag:
-   - `past-max`: current_bid ≥ user_max
-   - `approaching`: current_bid ≥ 0.8 × user_max
-   - `closing-soon`: <2 hours remaining
-   - `ended`: auction closed
-4. Rewrite `watchlist.md` in place, preserving user's structure, adding a "last checked" line per entry and a flag emoji/tag. Don't delete entries — user edits that file.
-5. On add/remove requests: edit `watchlist.md` accordingly.
-6. Summarize flags to the user in chat.
+No main-agent work beyond dispatch.
 
 ## Workflow 5 — Ad-hoc investigation
 
-**Inputs**: open-ended question ("why is retail listed as $2000?", "is this brand reputable?", "what's up with this odd bidding pattern").
+**Inputs**: open-ended question ("why is retail listed as $2000?", "is this brand reputable?", odd bidding pattern).
 
-**Steps**:
-1. Use whatever scripts + web search + image analysis fit the question.
-2. Converse. Ask clarifying questions if needed.
-3. When the finding is worth preserving, write to `findings/{YYYY-MM-DD}-{slug}.md`. If the investigation stays conversational/disposable, don't create a file. Ask if unsure.
+Ad-hoc investigations are **conversational by nature** — full delegation to a sub-agent usually breaks the back-and-forth. The main agent handles these directly, reaching for sub-agents only for well-defined chunks:
+- Need comps on a product? Spawn `mac-bid-ebay` standalone.
+- Need image analysis? Spawn `mac-bid-images` standalone.
+- Need a full lot pull? Spawn `mac-bid-lot`.
+
+When a finding is worth preserving, write to `findings/{YYYY-MM-DD}-{slug}.md`. If conversational/disposable, skip the file. Ask if unsure.
 
 ## Workflow 6 — Resell evaluation
 
