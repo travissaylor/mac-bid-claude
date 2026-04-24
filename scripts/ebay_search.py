@@ -44,6 +44,10 @@ CONDITION_MAP = {
 OP_PATH_APP_ID = "op://Personal/za7ym3agvpwbszokahxsfr5sq4/username"
 OP_PATH_CERT_ID = "op://Personal/za7ym3agvpwbszokahxsfr5sq4/credential"
 
+# Local credential cache populated by scripts/refresh_ebay_credentials.py.
+# Lets routine runs skip the per-call Touch ID prompt from `op read`.
+CRED_CACHE_FILE = os.path.expanduser("~/.config/mac-bid-claude/ebay.env")
+
 
 def _op_read(path):
     import subprocess
@@ -58,8 +62,27 @@ def _op_read(path):
     return r.stdout.strip(), None
 
 
+def _load_cred_cache():
+    if not os.path.exists(CRED_CACHE_FILE):
+        return
+    try:
+        with open(CRED_CACHE_FILE, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except OSError:
+        pass
+
+
 def resolve_credentials():
-    # Env vars win (useful for CI / ad-hoc overrides).
+    _load_cred_cache()
+    # Env vars (including those just loaded from the cache file) win.
     app_id = os.environ.get("EBAY_APP_ID")
     cert_id = os.environ.get("EBAY_CERT_ID")
     errs = []
@@ -74,7 +97,8 @@ def resolve_credentials():
     if not app_id or not cert_id:
         print(
             "Could not resolve eBay credentials. "
-            "Set EBAY_APP_ID and EBAY_CERT_ID env vars, "
+            f"Run `python3 scripts/refresh_ebay_credentials.py` to populate {CRED_CACHE_FILE}, "
+            "set EBAY_APP_ID / EBAY_CERT_ID env vars, "
             f"or ensure 1Password CLI is signed in so these paths resolve: "
             f"{OP_PATH_APP_ID}, {OP_PATH_CERT_ID}. "
             f"Errors: {'; '.join(errs) if errs else 'none'}",

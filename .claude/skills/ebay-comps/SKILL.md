@@ -46,14 +46,15 @@ Execute steps in order. **Stop the moment cumulative comps ≥ 5**, or when all 
 
 ## Authentication
 
-OAuth2 client credentials resolve automatically via 1Password CLI:
-- App ID: `op://Personal/za7ym3agvpwbszokahxsfr5sq4/username`
-- Cert ID: `op://Personal/za7ym3agvpwbszokahxsfr5sq4/credential`
+OAuth2 client credentials resolve in this order:
+1. `EBAY_APP_ID` / `EBAY_CERT_ID` environment variables (CI / ad-hoc overrides)
+2. Local cache file `~/.config/mac-bid-claude/ebay.env` (mode 0600), populated by `scripts/refresh_ebay_credentials.py`
+3. 1Password CLI direct reads from `op://Personal/za7ym3agvpwbszokahxsfr5sq4/{username,credential}`
 
-The script calls `op read` for both paths when the env vars are unset. Env vars `EBAY_APP_ID` / `EBAY_CERT_ID` take precedence if set (useful for CI / ad-hoc overrides). If `op` is not signed in, the script prints a clear diagnostic and exits 1.
+The cache file exists to skip the per-call Touch ID prompt that `op read` triggers — without it, every script invocation prompts for biometric approval. Run `python3 scripts/refresh_ebay_credentials.py` once after install (and again whenever eBay rotates the keys) to populate it. If neither the cache nor `op` resolves the values, the script prints a clear diagnostic and exits 1.
 
 ```
-python scripts/ebay_search.py --query "..."        # auto-resolves from 1Password
+python scripts/ebay_search.py --query "..."        # auto-resolves from cache, then op
 ```
 
 ## Caching

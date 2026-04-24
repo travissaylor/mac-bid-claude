@@ -69,7 +69,7 @@ mac-bid-claude/
 
 **Scripts** emit compact JSON on stdout. Caching, retries, and API quirks stay inside the scripts — Claude's context sees summaries, not raw payloads.
 
-**Secrets** via 1Password CLI (`op read "op://..."`). eBay API credentials resolve from `op://Personal/za7ym3agvpwbszokahxsfr5sq4/{username,credential}` (item: "API Credentials", username field = eBay app ID, credential field = eBay cert ID). `scripts/ebay_search.py` auto-resolves these when env vars are unset; setting `EBAY_APP_ID`/`EBAY_CERT_ID` overrides.
+**Secrets** via 1Password CLI (`op read "op://..."`). eBay API credentials resolve from `op://Personal/za7ym3agvpwbszokahxsfr5sq4/{username,credential}` (item: "API Credentials", username field = eBay app ID, credential field = eBay cert ID). To avoid per-call Touch ID prompts, run `python3 scripts/refresh_ebay_credentials.py` once — it writes a 0600 cache to `~/.config/mac-bid-claude/ebay.env` that `scripts/ebay_search.py` sources automatically. Re-run after key rotation. Setting `EBAY_APP_ID`/`EBAY_CERT_ID` env vars overrides both the cache file and `op read`.
 
 **Default home warehouses**: building IDs `15, 16, 6, 1` (Pittsburgh-area PA). Transfer = +$10. Remote = +$25. Home = $0.
 
