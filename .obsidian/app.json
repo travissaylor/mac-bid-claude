@@ -1,9 +1,9 @@
 {
   "userIgnoreFilters": [
-    "cache",
-    "scripts",
-    ".claude",
-    ".git"
+    "/^\\.claude\\//",
+    "/^\\.git\\//",
+    "cache/",
+    "scripts/"
   ],
   "alwaysUpdateLinks": true,
   "newLinkFormat": "shortest",

@@ -3,12 +3,10 @@ filters:
     - file.folder == "reports"
     - file.name.startsWith("lot-")
     - status == "watching"
-
 formulas:
-  deal_score: round((max_bid - current_bid) / max_bid * 100, 1)
+  deal_score: ((max_bid - current_bid) / max_bid * 100).toFixed(1)
   past_max: current_bid >= max_bid
-  headroom: max_bid - current_bid
-
+  headroom: (max_bid - current_bid).toFixed(2)
 properties:
   formula.deal_score:
     displayName: Deal score
@@ -28,25 +26,23 @@ properties:
     displayName: Closes
   note.condition:
     displayName: Condition
-
 views:
   - type: table
     name: Active watchlist
     order:
       - file.link
-      - note.title
-      - note.warehouse_name
-      - note.condition
-      - note.current_bid
-      - note.max_bid
+      - title
+      - warehouse_name
+      - condition
+      - current_bid
+      - max_bid
       - formula.headroom
       - formula.deal_score
-      - note.closes_at
+      - closes_at
       - formula.past_max
     sort:
-      - property: note.closes_at
+      - property: closes_at
         direction: ASC
-
   - type: table
     name: Past max (defend or concede)
     filters:
@@ -54,10 +50,10 @@ views:
         - current_bid >= max_bid
     order:
       - file.link
-      - note.title
-      - note.current_bid
-      - note.max_bid
-      - note.closes_at
+      - title
+      - current_bid
+      - max_bid
+      - closes_at
     sort:
-      - property: note.closes_at
+      - property: closes_at
         direction: ASC
