@@ -7,6 +7,7 @@ formulas:
   deal_score: ((max_bid - current_bid) / max_bid * 100).toFixed(1)
   past_max: current_bid >= max_bid
   headroom: (max_bid - current_bid).toFixed(2)
+  link: file.asLink(title)
 properties:
   formula.deal_score:
     displayName: Deal score
@@ -14,8 +15,8 @@ properties:
     displayName: Past max
   formula.headroom:
     displayName: Headroom
-  note.title:
-    displayName: Title
+  formula.link:
+    displayName: Lot
   note.warehouse_name:
     displayName: Warehouse
   note.current_bid:
@@ -30,8 +31,7 @@ views:
   - type: table
     name: Active watchlist
     order:
-      - file.link
-      - title
+      - formula.link
       - warehouse_name
       - condition
       - current_bid
@@ -49,8 +49,7 @@ views:
       and:
         - current_bid >= max_bid
     order:
-      - file.link
-      - title
+      - formula.link
       - current_bid
       - max_bid
       - closes_at

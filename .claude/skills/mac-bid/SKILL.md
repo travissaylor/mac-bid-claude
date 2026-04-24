@@ -290,6 +290,8 @@ recommend: {yes | no | manual}
 resell_eligible: {true | false}
 ---
 
+[[watchlist|← Back to watchlist]]
+
 # Lot {lid} — {title}
 <!-- Observed via aid={aid}. Filename/identity key on lid alone; aid is per-modal context. -->
 
