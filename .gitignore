@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# Cache contents (keep .gitkeep files)
+cache/lots/*
+!cache/lots/.gitkeep
+cache/ebay/*
+!cache/ebay/.gitkeep
+
+# Env
+.env
+.env.local

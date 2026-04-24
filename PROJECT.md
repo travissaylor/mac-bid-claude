@@ -47,9 +47,15 @@ mac-bid-claude/
 ## Data sources
 
 - **mac.bid**: public endpoints — no login required.
-  - DynamoDB REST (`https://api.macdiscount.com/map-bid/ddb/lot/:lotId`) for live bid data.
-  - SSR page scrape (`https://www.mac.bid/lot/:id`, parse `__NEXT_DATA__` from HTML) for product metadata and image URLs.
-  - `/buildings` endpoint for warehouse list and tax rates.
+  - `lid` is the canonical, stable identifier for a lot (short alphanumeric like `1795Q`, `3078E`) — use it alone for identity, dedup, cache keys (`cache/lots/{lid}.json`), report filenames (`reports/lot-{lid}.md`), and watchlist entries.
+  - `aid` is a per-modal URL routing parameter (string — numeric like `79565` or alphanumeric like `MVL2604-24-A1`) that varies by context: the same underlying `lid` can surface under different `aid` values depending on which modal exposes it (watchlist vs search vs other). mac.bid modal URLs require `aid` as a query param, and upstream APIs (DDB, SSR) likely need one too, so scripts still accept and forward it — but it is NOT part of lot identity.
+  - Lot URLs are modal-style — any mac.bid URL carrying both `aid` and `lid` query params encodes a specific lot, regardless of the page path. Shapes the user sees:
+    - Watchlist modal: `https://www.mac.bid/account/watchlist?aid=<aid>&lid=<lid>`
+    - Search modal: `https://www.mac.bid/search?q=...&aid=<aid>&lid=<lid>`
+  - **Live bid (DDB)**: `GET https://api.macdiscount.com/map-bid/ddb/lot/{internal_id}` — returns current_bid, max_bid (proxy-bid ceiling of current winner), watchers_count, end_time, extension_window, is_open, total_bids, winning_bidder_id, location_id, auction_id, lot_number. The `internal_id` is the lot's numeric primary key — NOT the `aid` or `lid` from modal URLs. It's obtained from SSR hydration data at `props.pageProps.activeLot.id`.
+  - **SSR page (for metadata)**: `GET https://www.mac.bid/search?aid={aid}&lid={lid}` renders the lot modal with a full `__NEXT_DATA__` JSON blob. Parse out `props.pageProps.activeLot` for all lot metadata (title, description, condition, UPC, retail, images, warehouse info, auction-level overrides). Deep-link URLs like `/lot/{aid}/{lid}` are unreliable — prefer the search modal URL pattern.
+  - **Lot metadata (REST alternative)**: `GET https://api.macdiscount.com/auction/{auction_number}/lot/{lot_number}` — returns the same activeLot-shaped record as SSR extraction. Useful when you already have the auction_number (e.g., from a prior SSR scrape). Does NOT include live current_bid — DDB is the only source for that.
+  - **Buildings**: `GET https://api.macdiscount.com/buildings` (already pinned).
 - **eBay**: Browse API via OAuth2 client credentials. Cascade search: UPC → LLM-generated query → broadened query → relaxed without condition filter. Minimum 5 comps for a confident recommendation; below that, Claude labels the number advisory.
 - **FB Marketplace**: no API. eBay sold comps serve as the price anchor for most items. For FB-sensitive categories, Claude prompts you to eyeball FB manually and paste what you see.
 - **Product photos**: analyzed inline by Claude's vision. Looking for damage, missing parts, product mismatch; each flag carries a severity.
@@ -58,7 +64,7 @@ mac-bid-claude/
 
 **Scripts** emit compact JSON on stdout. Caching, retries, and API quirks stay inside the scripts — Claude's context sees summaries, not raw payloads.
 
-**Secrets** via 1Password CLI (`op read "op://..."`). eBay API credentials are the main ones; exact 1Password paths pinned the first time they're wired up.
+**Secrets** via 1Password CLI (`op read "op://..."`). eBay API credentials resolve from `op://Personal/za7ym3agvpwbszokahxsfr5sq4/{username,credential}` (item: "API Credentials", username field = eBay app ID, credential field = eBay cert ID). `scripts/ebay_search.py` auto-resolves these when env vars are unset; setting `EBAY_APP_ID`/`EBAY_CERT_ID` overrides.
 
 **Default home warehouses**: building IDs `15, 16, 6, 1` (Pittsburgh-area PA). Transfer = +$10. Remote = +$25. Home = $0.
 
@@ -88,7 +94,7 @@ Defaults: `buyers_premium = 15%`, `lot_fee = $3.00`, `sales_tax` per-building (~
 
 ## Open questions
 
-- Exact 1Password item/field naming for eBay credentials (decide on first wire-up).
+- eBay Browse API returns active listings, not sold — the comp median runs ~15-20% above true sold prices. Decide whether to switch to the Marketplace Insights API (restricted access, app allowlist needed) or mechanically adjust (e.g., multiply active median by 0.85 before feeding to max-bid).
 - Whether multi-warehouse transfer cost should be modeled more granularly than the flat `$0 / $10 / $25` tiers.
 - Whether discovery queries should cache aggressively or fetch fresh each session.
 - When `ebay-comps` grows enough to live outside this project as a globally-installed skill.
