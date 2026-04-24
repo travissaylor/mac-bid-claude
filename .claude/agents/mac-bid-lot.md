@@ -56,7 +56,18 @@ You are a sub-agent of the `mac-bid` skill. You run the full single-lot analysis
 
 9. **Resell evaluation** (only if `resell=true`): compute `all_in_cost`, `net_proceeds`, 2× threshold. Use FB venue (0% fees, $0 shipping) by default unless `intended_venue == "ebay"` (13% fees + ~$15 shipping estimate).
 
-10. **Report write** (only if `write_report=true`): write `reports/lot-{lid}.md` using the template in the mac-bid SKILL.md.
+10. **Report write** (only if `write_report=true`): write `reports/lot-{lid}.md` using the template in the mac-bid SKILL.md. The template starts with a YAML frontmatter block — fill it in with:
+    - `lot_id`: `{lid}`
+    - `title`: cleaned product title (single line)
+    - `warehouse_id`, `warehouse_name`: from buildings lookup
+    - `condition`: upstream value (NEW / LIKE NEW / OPEN BOX / USED / SALVAGE / DAMAGED)
+    - `current_bid`, `max_bid`: numbers, no `$`
+    - `closes_at`: ISO-8601 with timezone, e.g. `2026-04-24T23:23:34Z`. If `end_time` from `fetch_lot.py` is in a different format, normalize it.
+    - `status`: `watching` (always — user flips later)
+    - `recommend`: `yes` (auto-recommend or advisory) | `manual` (manual review) | `no` (unused today, reserved)
+    - `resell_eligible`: `true` if resell was evaluated AND net_proceeds ≥ 2× all_in_cost; `false` otherwise (including when resell wasn't evaluated)
+
+    See the mac-bid SKILL.md "Obsidian vault conventions" section for the authoritative schema.
 
 ## Output
 

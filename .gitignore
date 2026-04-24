@@ -16,3 +16,9 @@ cache/ebay/*
 # Env
 .env
 .env.local
+
+# Obsidian — per-user view state (churns per-open), cache (regenerated)
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
+.obsidian/workspaces.json

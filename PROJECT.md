@@ -17,7 +17,7 @@ This project is for **deeper research sessions**: narrative reports, cross-listi
 1. **Analyze a single lot** — "Analyze `https://www.mac.bid/lot/...`" → Claude fetches lot data, runs an eBay cascade search, checks product photos for damage/missing parts, computes a max bid, and writes `reports/lot-{id}.md`.
 2. **Discover deals** — "What's closing tonight at my warehouses with a good deal score?" → Claude queries open lots, ranks them, drafts a shortlist.
 3. **Compare multiple lots** — "Which of these 3 is the best buy?" → side-by-side analysis in a single report.
-4. **Manage a watchlist** — `watchlist.md` is a human-editable markdown file. Claude reads it, refreshes current bids, flags lots that have moved past your max, adds/removes entries on request.
+4. **Manage a watchlist** — the watchlist is `watchlist.base`, an Obsidian Base view over `reports/lot-*.md` with `status: watching`. Claude refreshes current bids by updating each report's `current_bid` frontmatter; the view reflects automatically. Lots are added to the watchlist by analyzing them (new reports default to `status: watching`) and removed by flipping `status` to `passed`.
 5. **Ad-hoc investigations** — "Why is this priced oddly?" / "Is this retail price realistic?" → conversational; findings land in `findings/` when worth preserving.
 6. **Resell evaluation** — toggleable per-lot. Claude evaluates whether expected net proceeds clear the 2× margin bar on FB Marketplace (primary resale venue) or eBay (fallback).
 
@@ -30,18 +30,23 @@ Both live under `.claude/skills/` as project-local skills.
 
 ## Directory layout
 
+This project is an Obsidian vault — open the project root in Obsidian. `cache/`, `scripts/`, `.claude/`, and `.git/` are hidden from Obsidian via `userIgnoreFilters` in `.obsidian/app.json`; Claude still reads/writes them normally.
+
 ```
 mac-bid-claude/
   PROJECT.md              # this file
-  watchlist.md            # source of truth for lots being watched
-  reports/lot-{id}.md     # per-lot analysis reports
-  findings/               # ad-hoc investigation notes
+  watchlist.md            # thin wrapper that embeds watchlist.base
+  watchlist.base          # Obsidian Base: reports where status == watching
+  reports/lot-{lid}.md    # per-lot analysis reports (frontmatter + body)
+  findings/               # ad-hoc investigation notes (wikilinks to reports)
   cache/
-    lots/{id}.json        # raw mac.bid lot payloads
+    lots/{lid}.json       # raw mac.bid lot payloads (also holds aid, upc, etc.)
     ebay/{hash}.json      # cached eBay cascade results
     buildings.json        # warehouse + tax-rate lookup
   scripts/                # Python helpers invoked by skills via Bash
   .claude/skills/         # mac-bid and ebay-comps skill definitions
+  .claude/agents/         # mac-bid sub-agents
+  .obsidian/              # vault config (excluded folders, plugins, property types)
 ```
 
 ## Data sources
@@ -78,6 +83,28 @@ Defaults: `buyers_premium = 15%`, `lot_fee = $3.00`, `sales_tax` per-building (~
 **Resell threshold**: expected net proceeds ≥ **2× all-in cost** to flag a lot "resell-worthy." Below that, still analyzed, labeled "marginal for resell."
 
 **FB-sensitive categories** (living list — extend as you learn): large furniture, mattresses, major appliances, grills/outdoor equipment, exercise equipment, anything heavy or awkward to ship.
+
+**Report frontmatter schema** (every `reports/lot-*.md` starts with this YAML block):
+
+```yaml
+lot_id, title, warehouse_id, warehouse_name, condition,
+current_bid, max_bid, closes_at (ISO-8601 with TZ),
+status, recommend, resell_eligible
+```
+
+Derived values (`deal_score`, `past_max`, `headroom`) are **not stored** — `watchlist.base` computes them via formulas so they can't go stale when `current_bid` updates. Lot identifiers (`aid`, `auction_number`, `internal_id`, `upc`) live in `cache/lots/{lid}.json`, not frontmatter.
+
+**Status values** (`status` is the only field the user owns; Claude never flips it autonomously):
+
+| Value | Meaning |
+|---|---|
+| `watching` | Active on the watchlist — appears in `watchlist.base` |
+| `passed` | Decided not to bid |
+| `bid` | Bid placed, auction still live |
+| `won` / `lost` | Auction resolved |
+| `archived` | Historical; cleared from all views |
+
+**Obsidian CLI for property writes**: when Claude updates a single frontmatter field (`current_bid` on refresh, `status` on remove), prefer `obsidian-cli property set` over regex-editing the YAML — preserves ordering and types.
 
 **Condition gating**:
 - `NEW` / `LIKE NEW` / `OPEN BOX` + ≥5 comps → auto-recommend a max bid.

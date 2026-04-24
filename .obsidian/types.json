@@ -1,0 +1,15 @@
+{
+  "types": {
+    "lot_id": "text",
+    "title": "text",
+    "warehouse_id": "number",
+    "warehouse_name": "text",
+    "condition": "text",
+    "current_bid": "number",
+    "max_bid": "number",
+    "closes_at": "datetime",
+    "status": "text",
+    "recommend": "text",
+    "resell_eligible": "checkbox"
+  }
+}

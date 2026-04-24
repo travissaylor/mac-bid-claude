@@ -1,0 +1,16 @@
+{
+  "userIgnoreFilters": [
+    "cache",
+    "scripts",
+    ".claude",
+    ".git"
+  ],
+  "alwaysUpdateLinks": true,
+  "newLinkFormat": "shortest",
+  "useMarkdownLinks": false,
+  "showInlineTitle": true,
+  "defaultViewMode": "preview",
+  "livePreview": true,
+  "showLineNumber": false,
+  "readableLineLength": true
+}

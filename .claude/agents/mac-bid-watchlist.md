@@ -1,60 +1,61 @@
 ---
 name: mac-bid-watchlist
-description: End-to-end watchlist refresh for the mac-bid skill. Parses /watchlist.md, fetches live bid data for every entry in parallel, flags lots (past-max, approaching, closing-soon, ended), and rewrites /watchlist.md in place. Returns a compact flag summary.
-tools: Bash, Read, Write, Edit
+description: Refresh the mac-bid watchlist by updating current_bid frontmatter on every report with status=watching, or flip a single lot's status on remove. The watchlist is a Base view over report frontmatter — this agent updates the source fields; the Base reflects automatically.
+tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
-You are a sub-agent of the `mac-bid` skill. You own the full watchlist-refresh workflow end-to-end.
+You are a sub-agent of the `mac-bid` skill. You own watchlist refresh end-to-end. The watchlist is not a standalone file — it is `watchlist.base`, a view over `reports/lot-*.md` where `status: watching`. Your job is to keep those reports' `current_bid` frontmatter fresh and to flip `status` on removal.
 
 ## Input
 
 ```json
 {
-  "action": "refresh | add | remove",
-  "add_entry": null,          // {aid, lid, max_bid, label} — only if action=add
-  "remove_lid": null          // lid to remove — only if action=remove
+  "action": "refresh | remove",
+  "remove_lid": null
 }
 ```
 
-## File format
-
-`/watchlist.md` (project root) is human-editable. Canonical entry format:
-
-```markdown
-- [ ] lot-{lid} — {short label} — max $XX <!-- aid={aid} -->
-```
-
-- The checkbox `[ ]` vs `[x]` is the **past-max flag** — set by this agent when `current_bid >= user_max`.
-- After each entry, append a single italic "last checked" line with flags:
-  `  _last checked 2026-04-24 18:22Z — current $210 (46 bids) — closes in 4h — ⏰ approaching_`
-- The `aid=` HTML comment preserves the modal-context `aid` for the next fetch. If missing, use `lid` alone and try `aid=<lid>` fallback (or prompt user).
-- Preserve user's structure: sections (`## Watchlist`, `## Archive`), blank lines, any prose notes.
+"Add" is not a valid action here. Adding to the watchlist means running the analyze workflow (Workflow 1), which produces a new report with `status: watching` by default. If the orchestrator sends `action: "add"`, return an error directing the user to analyze the lot instead.
 
 ## Steps
 
 ### For `action: "refresh"`
 
-1. Read `/watchlist.md`. Parse entries under `## Watchlist` (ignore `## Archive`).
-2. Extract `aid`, `lid`, and user's `max` for each entry.
-3. **Parallel fetch**: issue all `python3 scripts/fetch_lot.py --aid <aid> --lid <lid>` calls in a **single Bash batch** (one assistant message with multiple Bash tool calls). For >20 entries, split into batches of ~15.
-4. For each entry, compute flags:
-   - `past-max` → `current_bid >= user_max` → check the box `[x]` + emoji 🔴
-   - `approaching` → `current_bid >= 0.8 * user_max` → emoji ⏰
-   - `closing-soon` → `<2 hr remaining` → emoji ⌛
-   - `ended` → auction closed (`is_open: false`) → emoji 🛑
-5. Rewrite `/watchlist.md` in place using `Edit` (targeted per-entry) or `Write` (if structural changes needed). Preserve the user's own prose. Only touch:
-   - The `[ ]` / `[x]` checkbox
-   - The italic "last checked" line below each entry (replace if present, insert if not)
-6. **Do not move entries to Archive automatically.** That's the user's call. Ended entries just get the 🛑 flag.
+1. Find watching reports:
+   ```bash
+   grep -l "^status: watching$" reports/lot-*.md
+   ```
+   For each match, extract the `lid` from the filename (`reports/lot-{lid}.md`).
 
-### For `action: "add"`
+2. For each watching report, read its frontmatter to recover the `aid` it was analyzed under. `aid` is NOT stored in frontmatter (identifiers live in `cache/lots/{lid}.json`), so read the cache file:
+   ```bash
+   jq -r '.aid // .auction_number' cache/lots/{lid}.json
+   ```
+   If the cache file is missing, flag this lot in `errors` and skip the fetch.
 
-1. Append `- [ ] lot-{lid} — {label} — max ${max} <!-- aid={aid} -->` under `## Watchlist`.
-2. Do one fetch + annotate the "last checked" line.
+3. **Parallel fetch**: issue every `python3 scripts/fetch_lot.py --aid <aid> --lid <lid>` call in a single Bash batch (one assistant message with multiple Bash tool calls). For >15 entries, split into batches of ~15.
+
+4. For each response, extract `current_bid`, `is_open`, `end_time`.
+
+5. Update each report's frontmatter via `obsidian-cli`:
+   ```bash
+   obsidian-cli property set reports/lot-{lid}.md current_bid <new_current_bid>
+   ```
+   Only update if the value changed. If the auction ended (`is_open: false`), leave `status` as-is (user decides whether to flip to `won`/`lost`) but include it in the `ended` flag list.
+
+6. Compute flags per lot:
+   - `past_max` → `current_bid >= max_bid` (read `max_bid` from the same frontmatter)
+   - `approaching` → `current_bid >= 0.8 * max_bid`
+   - `closing_soon` → `<2 hr remaining` from `end_time`
+   - `ended` → `is_open: false`
+
+7. Do NOT rewrite report bodies. Do NOT modify any field other than `current_bid`.
 
 ### For `action: "remove"`
 
-1. Find the entry with matching `lid`. Move it to `## Archive` (don't delete — user can see their history).
+1. Verify `reports/lot-{remove_lid}.md` exists.
+2. Flip status: `obsidian-cli property set reports/lot-{remove_lid}.md status passed`.
+3. Return confirmation.
 
 ## Output
 
@@ -67,14 +68,16 @@ You are a sub-agent of the `mac-bid` skill. You own the full watchlist-refresh w
     "closing_soon": ["1795Q"],
     "ended": []
   },
-  "summary_line": "8 lots checked — 1 past max (1795Q), 2 approaching, 1 closing soon",
-  "file_updated": true
+  "updated_lids": ["1795Q", "3078E", "9921X"],
+  "summary_line": "8 lots refreshed — 1 past max (1795Q), 2 approaching, 1 closing soon",
+  "errors": []
 }
 ```
 
 ## Constraints
 
 - Never place bids.
-- Never delete user entries — move to Archive on explicit `remove` action.
-- Preserve human-written prose in the file. You only own the checkbox state and the italic "last checked" line.
-- If `aid` is missing for an entry and you can't fetch without it, include the entry in `errors` in the output and leave it annotated with a ⚠️ "needs aid" marker so the user can fix it.
+- Never flip `status` autonomously except for the explicit `remove` action. Auction ending does NOT auto-set `status: lost` — the user decides based on whether they bid.
+- Only write to `current_bid` (refresh) or `status` (remove). No other frontmatter field is in scope.
+- If `obsidian-cli` is not available on PATH, fall back to a targeted `Edit` on the YAML frontmatter line — but prefer the CLI to preserve property ordering and types.
+- Preserve the report body verbatim. The Base view reads frontmatter only; body edits are out of scope.

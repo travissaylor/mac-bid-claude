@@ -178,10 +178,15 @@ That's the entire main-agent flow. The sub-agent handles SSR, live fetch, buildi
 
 ## Workflow 4 — Watchlist refresh
 
-**Inputs**: "refresh watchlist", "check my watches", "add/remove watch", implicit mention of `watchlist.md`.
+The watchlist is a Base view (`watchlist.base`) over reports with `status: watching`. There's no standalone watchlist file to parse — refreshing the watchlist means re-fetching live bids for each matching report and updating its `current_bid` frontmatter.
+
+**Inputs**: "refresh watchlist", "check my watches", "add/remove watch".
 
 **Dispatch**:
-1. Spawn `mac-bid-watchlist` with `{action: "refresh" | "add" | "remove", ...}`. The sub-agent parses `watchlist.md`, fetches all lots in parallel inside its context, computes flags, and rewrites the file.
+1. Spawn `mac-bid-watchlist` with `{action: "refresh" | "remove", ...}`.
+   - `refresh`: sub-agent scans `reports/lot-*.md` for `status: watching`, fetches live DDB for each in parallel, updates `current_bid` via `obsidian-cli property set`, flags past-max lots.
+   - `remove`: flips a lot's `status` from `watching` to `passed`.
+   - **"Add"** is not a real action here — adding to the watchlist = running the analyze workflow (Workflow 1), which produces a report with `status: watching` by default.
 2. Print the returned `summary_line` to the user.
 
 No main-agent work beyond dispatch.
@@ -209,9 +214,82 @@ Stacks on (1) or (3). Inputs: same as host workflow + "evaluate for resell" / "f
 
 ---
 
+## Obsidian vault conventions
+
+This project is an Obsidian vault. Reports are vault notes; the watchlist is a Base view over report frontmatter. That changes how reports are written and updated.
+
+### Frontmatter schema (required on every `reports/lot-{lid}.md`)
+
+```yaml
+---
+lot_id: {lid}
+title: {product title, single line, no brand prefix if title already includes it}
+warehouse_id: {building_id}
+warehouse_name: {short name — "Monroeville", "Washington PA", "Robinson"}
+condition: {NEW | LIKE NEW | OPEN BOX | USED | SALVAGE | DAMAGED}
+current_bid: {number, no $ sign}
+max_bid: {number to 2 decimals, no $ sign; or null if manual-review}
+closes_at: {ISO-8601 with timezone, e.g. 2026-04-27T23:52:48Z}
+status: watching     # see status values below
+recommend: {yes | no | manual}
+resell_eligible: {true | false}
+---
+```
+
+**Derived fields live in `watchlist.base`, not frontmatter.** Do not store `deal_score`, `past_max`, `headroom` — the Base formula computes them from `current_bid` and `max_bid`. Storing them creates staleness when `current_bid` updates.
+
+**Identifiers stay in the cache, not frontmatter.** `aid`, `auction_number`, `lot_number`, `internal_id`, `upc` belong in `cache/lots/{lid}.json`. Keep frontmatter about decision-making fields only.
+
+### Status values (user-owned field)
+
+| Value | Meaning |
+|---|---|
+| `watching` | Active on the watchlist |
+| `passed` | Decided not to bid |
+| `bid` | Bid placed, auction still live |
+| `won` | Won |
+| `lost` | Lost |
+| `archived` | Historical |
+
+`status` is **the only field the user owns**. When writing a new report, default to `watching`. Never flip it autonomously based on analysis — the user decides.
+
+### Timestamps
+
+Always ISO-8601 with timezone. Prefer `Z` (UTC) since the upstream mac.bid `end_time` is UTC. Example: `2026-04-27T23:52:48Z`. Do NOT emit `2026-04-27 23:52:48 UTC` — Obsidian Bases cannot sort that format.
+
+### Wikilinks
+
+When a finding is worth preserving, write `findings/{YYYY-MM-DD}-{slug}.md` and reference it from the related report's "Notes" section using `[[findings/{YYYY-MM-DD}-{slug}]]`. When a finding references a lot, use `[[lot-{lid}]]` so backlinks surface on the report.
+
+### Property updates — prefer `obsidian-cli`
+
+When updating a single property (refreshing `current_bid`, flipping `status`), prefer the Obsidian CLI over regex-editing the markdown:
+
+```bash
+obsidian-cli property set reports/lot-{lid}.md current_bid 47
+```
+
+This preserves frontmatter ordering and types. Raw `Edit` tool is fine for multi-field rewrites or report body changes.
+
+---
+
 ## Report template — `reports/lot-{lid}.md`
 
 ```markdown
+---
+lot_id: {lid}
+title: {title}
+warehouse_id: {building_id}
+warehouse_name: {short name}
+condition: {CONDITION}
+current_bid: {n}
+max_bid: {n}
+closes_at: {ISO-8601 Z}
+status: watching
+recommend: {yes | no | manual}
+resell_eligible: {true | false}
+---
+
 # Lot {lid} — {title}
 <!-- Observed via aid={aid}. Filename/identity key on lid alone; aid is per-modal context. -->
 
@@ -257,6 +335,9 @@ Stacks on (1) or (3). Inputs: same as host workflow + "evaluate for resell" / "f
 
 ## Warnings / flags
 {bullet list}
+
+## Notes
+{Optional: wikilinks to related findings, e.g. [[findings/2026-04-24-retail-pricing-quirks]]}
 ```
 
 ---

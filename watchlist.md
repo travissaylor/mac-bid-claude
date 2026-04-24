@@ -1,19 +1,23 @@
 # Watchlist
 
-Source of truth for lots being watched. Claude reads this file, refreshes current bids, flags lots that have moved past your max, and adds/removes entries on request.
+The live view is below — it's a [Base](https://help.obsidian.md/bases) that queries every `reports/lot-*.md` file with `status: watching` in its frontmatter.
 
-## How to use
+![[watchlist.base]]
 
-Add a line under `## Watchlist` in this format:
+## How it works
 
-`- [ ] lot-{id} — {short label} — max $XX`
+- **Adding a lot**: run the analyze workflow (hand Claude a mac.bid URL). The resulting report is written with `status: watching` and automatically appears here.
+- **Removing a lot**: flip its `status` to `passed` (you lost interest), `bid` (you placed a bid), `won`, `lost`, or `archived`. Ask Claude or edit the frontmatter directly.
+- **Refreshing current bids**: ask Claude to "refresh the watchlist" — it re-fetches each lot's live DDB payload and updates `current_bid` in place via `obsidian-cli`. The `Past max` and `Deal score` formulas recompute automatically.
+- **The one field you own**: `status`. Everything else is Claude-maintained.
 
-The checkbox is the past-max flag: Claude checks it when the current bid exceeds your max.
+## Status values
 
-## Watchlist
-
-<!-- Example: - [ ] lot-12345678 — Dewalt drill kit — max $45 -->
-
-## Archive
-
-<!-- Lots you have bid on or passed on. Move entries here from Watchlist when done. -->
+| Value | Meaning |
+|---|---|
+| `watching` | Active on the watchlist — appears in the Base view above |
+| `passed` | Decided not to bid |
+| `bid` | Bid placed, auction still live |
+| `won` | Won the auction |
+| `lost` | Lost the auction |
+| `archived` | Historical; cleared from all views |

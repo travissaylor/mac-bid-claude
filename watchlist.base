@@ -1,0 +1,63 @@
+filters:
+  and:
+    - file.folder == "reports"
+    - file.name.startsWith("lot-")
+    - status == "watching"
+
+formulas:
+  deal_score: round((max_bid - current_bid) / max_bid * 100, 1)
+  past_max: current_bid >= max_bid
+  headroom: max_bid - current_bid
+
+properties:
+  formula.deal_score:
+    displayName: Deal score
+  formula.past_max:
+    displayName: Past max
+  formula.headroom:
+    displayName: Headroom
+  note.title:
+    displayName: Title
+  note.warehouse_name:
+    displayName: Warehouse
+  note.current_bid:
+    displayName: Current
+  note.max_bid:
+    displayName: Max
+  note.closes_at:
+    displayName: Closes
+  note.condition:
+    displayName: Condition
+
+views:
+  - type: table
+    name: Active watchlist
+    order:
+      - file.link
+      - note.title
+      - note.warehouse_name
+      - note.condition
+      - note.current_bid
+      - note.max_bid
+      - formula.headroom
+      - formula.deal_score
+      - note.closes_at
+      - formula.past_max
+    sort:
+      - property: note.closes_at
+        direction: ASC
+
+  - type: table
+    name: Past max (defend or concede)
+    filters:
+      and:
+        - current_bid >= max_bid
+    order:
+      - file.link
+      - note.title
+      - note.current_bid
+      - note.max_bid
+      - note.closes_at
+    sort:
+      - property: note.closes_at
+        direction: ASC
