@@ -308,6 +308,14 @@ def project(aid: str, lid: str, raw) -> dict:
     return out
 
 
+def _stdout_projection(obj):
+    """Strip the heavyweight `raw` blob before serializing to stdout.
+
+    The cache file on disk keeps `raw` for debugging; downstream callers
+    (Claude sub-agents) only need the projected fields."""
+    return {k: v for k, v in obj.items() if k != "raw"}
+
+
 def _try_url(url: str, aid: str, lid: str):
     """Fetch `url`; return parsed __NEXT_DATA__ dict iff it mentions `lid`.
     Returns None on any failure or on a mismatch. Raises on unrecoverable fetch errors
@@ -351,7 +359,7 @@ def main() -> int:
     if not args.no_cache:
         cached = load_cached(path, args.max_age_seconds)
         if cached is not None:
-            sys.stdout.write(json.dumps(cached, separators=(",", ":")))
+            sys.stdout.write(json.dumps(_stdout_projection(cached), separators=(",", ":")))
             return 0
 
     # Prefer last-known-good pattern first, then the rest in declared order.
@@ -395,7 +403,7 @@ def main() -> int:
     except OSError as e:
         sys.stderr.write(f"cache write failed: {e}\n")
 
-    sys.stdout.write(json.dumps(obj, separators=(",", ":")))
+    sys.stdout.write(json.dumps(_stdout_projection(obj), separators=(",", ":")))
     return 0
 
 

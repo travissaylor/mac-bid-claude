@@ -18,6 +18,7 @@ import base64
 import hashlib
 import json
 import os
+import statistics
 import sys
 import time
 import urllib.error
@@ -305,18 +306,32 @@ def build_output(query, upc, condition_list, comps, cached):
     prices = [c["price"] for c in comps]
     med = median(prices)
     pr = [min(prices), max(prices)] if prices else [None, None]
+    if len(prices) >= 2:
+        floor = round(statistics.quantiles(prices, n=4)[0], 2)
+    else:
+        floor = None
     return {
         "query": query,
         "upc": upc,
         "condition": condition_list,
         "comp_count": len(comps),
         "median_price_usd": round(med, 2) if med is not None else None,
+        "floor_median_usd": floor,
         "price_range": pr,
         "sample_titles": [c["title"] for c in comps[:5]],
         "comps": comps,
         "cached": cached,
         "note": "prices are from active listings, not sold — see script header comment",
     }
+
+
+def _stdout_projection(obj):
+    """Strip the heavyweight `comps` array before serializing to stdout.
+
+    The cache file on disk keeps `comps` for debugging; downstream callers
+    (Claude sub-agents) get the aggregated stats (median, floor, range,
+    sample_titles) instead and avoid the full per-listing payload."""
+    return {k: v for k, v in obj.items() if k != "comps"}
 
 
 def parse_args(argv):
@@ -362,7 +377,7 @@ def main(argv=None):
         cached = load_cache(key, DEFAULT_TTL)
         if cached is not None:
             cached["cached"] = True
-            sys.stdout.write(json.dumps(cached, separators=(",", ":")))
+            sys.stdout.write(json.dumps(_stdout_projection(cached), separators=(",", ":")))
             sys.stdout.write("\n")
             return
 
@@ -373,7 +388,7 @@ def main(argv=None):
 
     save_cache(key, output)
 
-    sys.stdout.write(json.dumps(output, separators=(",", ":")))
+    sys.stdout.write(json.dumps(_stdout_projection(output), separators=(",", ":")))
     sys.stdout.write("\n")
 
 
