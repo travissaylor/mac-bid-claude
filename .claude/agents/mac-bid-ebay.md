@@ -42,6 +42,8 @@ Return **only** this JSON (no prose, no markdown):
 {
   "comp_count": 27,
   "median_price_usd": 419.0,
+  "floor_median_usd": 391.5,            // 25th percentile of the same filtered comp set
+  "floor_source": "p25",
   "price_range": [359.0, 460.0],        // Trim absurd outliers: exclude listings obviously not the product (e.g. "EMPTY BOX ONLY", accessories, novelty). Note excluded items in `outliers_excluded`.
   "outliers_excluded": ["EMPTY BOX ONLY ... $5.50", "EMPTY BOX ONLY ... $10"],
   "sample_titles": ["...", "...", "...", "...", "..."],  // 5 representative listings
@@ -54,7 +56,9 @@ Return **only** this JSON (no prose, no markdown):
 }
 ```
 
-**Medium calculation note**: the `median_price_usd` you report can be the script's raw median when outliers are minimal, or a recomputed median over the filtered set when you excluded things. If you filter, say so in `outliers_excluded`.
+**Floor note**: `floor_median_usd` is the 25th percentile of the same filtered comp set used for `median_price_usd`. The parent skill feeds it into a parallel `max_bid_floor` calculation via `scripts/max_bid.py --floor-median <value> --floor-source p25`. Emit it even with fewer than 5 comps — `advisory_note` already flags low confidence.
+
+**Medium calculation note**: the `median_price_usd` you report can be the script's raw median when outliers are minimal, or a recomputed median over the filtered set when you excluded things. If you filter, say so in `outliers_excluded`. The same outlier-exclusion logic applies to `floor_median_usd` — compute the p25 over the same filtered set.
 
 ## Constraints
 

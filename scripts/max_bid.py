@@ -40,6 +40,10 @@ def parse_args() -> argparse.Namespace:
                    help="Current bid in USD; enables deal-score output")
     p.add_argument("--resell", action="store_true",
                    help="Also compute resell-worthiness check")
+    p.add_argument("--floor-median", type=float, default=None,
+                   help="Pessimistic median in USD; enables max_bid_floor output")
+    p.add_argument("--floor-source", type=str, default=None,
+                   help="Descriptive label for floor median source (e.g. p25, for-parts)")
     return p.parse_args()
 
 
@@ -58,6 +62,8 @@ def validate(args: argparse.Namespace) -> None:
         fail("--location-cost must be >= 0")
     if args.current_bid is not None and args.current_bid < 0:
         fail("--current-bid must be >= 0")
+    if args.floor_median is not None and args.floor_median < 0:
+        fail("--floor-median must be >= 0")
 
 
 def main() -> None:
@@ -83,24 +89,45 @@ def main() -> None:
     if args.current_bid is not None and args.current_bid > max_bid:
         warnings.append("already past max — skip")
 
+    target_all_in_floor = None
+    max_bid_floor = None
+    if args.floor_median is not None:
+        target_all_in_floor = args.floor_median * (1 - args.discount)
+        max_bid_floor = (target_all_in_floor - args.lot_fee - location_cost) / denom
+        if max_bid_floor <= 0:
+            warnings.append("max_bid_floor <= 0 — floor unusable")
+        elif max_bid_floor < 1:
+            warnings.append("max_bid_floor below $1 — functionally skip at floor")
+        if args.current_bid is not None and args.current_bid > max_bid_floor:
+            warnings.append("current bid past max_bid_floor")
+
     deal_score = None
     if args.current_bid is not None and max_bid > 0:
         deal_score = round((max_bid - args.current_bid) / max_bid * 100, 1)
 
-    out: dict = {
-        "inputs": {
-            "median": round(args.median, 2),
-            "discount": args.discount,
-            "buyers_premium": args.buyers_premium,
-            "lot_fee": round(args.lot_fee, 2),
-            "location": args.location,
-            "location_cost": round(location_cost, 2),
-            "tax": args.tax,
-        },
-        "target_all_in": round(target_all_in, 2),
-        "max_bid": round(max_bid, 2),
-        "deal_score": deal_score,
+    inputs: dict = {
+        "median": round(args.median, 2),
+        "discount": args.discount,
+        "buyers_premium": args.buyers_premium,
+        "lot_fee": round(args.lot_fee, 2),
+        "location": args.location,
+        "location_cost": round(location_cost, 2),
+        "tax": args.tax,
     }
+    if args.floor_median is not None:
+        inputs["floor_median"] = round(args.floor_median, 2)
+        inputs["floor_source"] = args.floor_source
+
+    out: dict = {
+        "inputs": inputs,
+        "target_all_in": round(target_all_in, 2),
+    }
+    if args.floor_median is not None:
+        out["target_all_in_floor"] = round(target_all_in_floor, 2)
+    out["max_bid"] = round(max_bid, 2)
+    if args.floor_median is not None:
+        out["max_bid_floor"] = round(max_bid_floor, 2)
+    out["deal_score"] = deal_score
 
     if args.resell:
         effective_max = max(max_bid, 0.0)

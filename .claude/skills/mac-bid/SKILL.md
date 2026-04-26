@@ -47,6 +47,14 @@ Defaults: `buyers_premium = 0.15`, `lot_fee = 3.00`, `discount = 0.30`. `sales_t
 
 Before calling `scripts/max_bid.py`, check the SSR output: if `lot_fee_override` is non-null, pass it as `--lot-fee <value>`; if `buyers_premium_override` is non-null, pass it as `--buyers-premium <value>`. Otherwise the script's defaults apply.
 
+**Floor max bid (worst-case lane)**
+```
+floor_median        = p25 of eBay comp set (or for-parts / cheaper-variant median where applicable)
+target_all_in_floor = floor_median * (1 - discount)
+max_bid_floor       = (target_all_in_floor - lot_fee - location_cost) / (1 + buyers_premium + sales_tax)
+```
+Same formula as `max_bid`, pessimistic median input. Default floor source is `p25` (25th percentile of the same comp set used for the median — no extra API call). For high-risk lots (USED/SALVAGE/DAMAGED, severe image flags, model ambiguity), a smarter floor source — explicit "for parts" eBay search, or the cheaper plausible variant's median — can be substituted later. Out of scope for this change. Pass `--floor-median <value> --floor-source p25` to `scripts/max_bid.py` to compute the floor lane alongside the median lane.
+
 **Deal score**
 ```
 deal_score = (max_bid - current_bid) / max_bid * 100
@@ -229,6 +237,7 @@ warehouse_name: {short name — "Monroeville", "Washington PA", "Robinson"}
 condition: {NEW | LIKE NEW | OPEN BOX | USED | SALVAGE | DAMAGED}
 current_bid: {number, no $ sign}
 max_bid: {number to 2 decimals, no $ sign; or null if manual-review}
+max_bid_floor: {number to 2 decimals, no $ sign; or null if floor unavailable}
 closes_at: {ISO-8601 with timezone, e.g. 2026-04-27T23:52:48Z}
 status: watching     # see status values below
 recommend: {yes | no | manual}
@@ -236,7 +245,7 @@ resell_eligible: {true | false}
 ---
 ```
 
-**Derived fields live in `watchlist.base`, not frontmatter.** Do not store `deal_score`, `past_max`, `headroom` — the Base formula computes them from `current_bid` and `max_bid`. Storing them creates staleness when `current_bid` updates.
+**Derived fields live in `watchlist.base`, not frontmatter.** Do not store `deal_score`, `past_max`, `headroom` — the Base formula computes them from `current_bid` and `max_bid`. Storing them creates staleness when `current_bid` updates. `max_bid_floor` does belong in frontmatter alongside `max_bid` because it's a decision-making input (the worst-case bid ceiling), not a value derived from `current_bid`.
 
 **Identifiers stay in the cache, not frontmatter.** `aid`, `auction_number`, `lot_number`, `internal_id`, `upc` belong in `cache/lots/{lid}.json`. Keep frontmatter about decision-making fields only.
 
@@ -284,6 +293,7 @@ warehouse_name: {short name}
 condition: {CONDITION}
 current_bid: {n}
 max_bid: {n}
+max_bid_floor: {n}
 closes_at: {ISO-8601 Z}
 status: watching
 recommend: {yes | no | manual}
@@ -296,7 +306,7 @@ resell_eligible: {true | false}
 <!-- Observed via aid={aid}. Filename/identity key on lid alone; aid is per-modal context. -->
 
 ## Summary
-- **Recommendation**: {max_bid | manual review | advisory}
+- **Recommendation**: {floor $X (worst case) / median $Y (typical) | manual review | advisory}
 - **Deal score**: {n}
 - **Key flags**: {bullet list or "none"}
 
@@ -328,6 +338,13 @@ resell_eligible: {true | false}
 - buyers_premium: 15%
 - sales_tax: {rate}
 - **max_bid: ${max}**
+
+### Worst-case scenario
+- floor_median (source: {p25 | for-parts | cheaper-variant}): ${n}
+- target_all_in_floor: ${n}
+- **max_bid_floor: ${n}**
+
+Bidding at the floor assumes {brief reason: low-end of condition distribution / cheaper plausible variant / hidden fault}. Anything between max_bid_floor and max_bid is paying for upside that may not materialize.
 
 ## Deal score
 (max_bid - current_bid) / max_bid * 100 = **{score}**

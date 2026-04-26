@@ -23,6 +23,8 @@ properties:
     displayName: Current
   note.max_bid:
     displayName: Max
+  note.max_bid_floor:
+    displayName: Max (floor)
   note.closes_at:
     displayName: Closes
   note.condition:
@@ -36,6 +38,7 @@ views:
       - condition
       - current_bid
       - max_bid
+      - max_bid_floor
       - formula.headroom
       - formula.deal_score
       - closes_at
@@ -52,6 +55,7 @@ views:
       - formula.link
       - current_bid
       - max_bid
+      - max_bid_floor
       - closes_at
     sort:
       - property: closes_at
